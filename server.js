@@ -74,19 +74,55 @@ async function shopifyRequest(path, method = 'GET', body = null) {
  * Returns the public file URL
  */
 async function uploadFileToShopify(base64, filename) {
-  // Keep preview small in logs (don't log raw base64)
-  const body = {
-    file: {
-      attachment: base64,
-      filename
+  const query = `
+    mutation fileCreate($files: [FileCreateInput!]!) {
+      fileCreate(files: $files) {
+        files {
+          id
+          url
+        }
+        userErrors {
+          field
+          message
+        }
+      }
     }
+  `;
+
+  const variables = {
+    files: [
+      {
+        contentType: "IMAGE",
+        originalSource: `data:image/jpeg;base64,${base64}`,
+        alt: filename
+      }
+    ]
   };
-  const data = await shopifyRequest('files.json', 'POST', body);
-  if (!data || !data.file || !data.file.url) {
-    throw new Error('Shopify file upload failed: ' + JSON.stringify(data));
+
+  const url = `https://${SHOP}/admin/api/${API_VERSION}/graphql.json`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'X-Shopify-Access-Token': TOKEN,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ query, variables })
+  });
+
+  const json = await res.json();
+
+  if (json.errors) {
+    throw new Error('GraphQL error: ' + JSON.stringify(json.errors));
   }
-  return data.file.url;
+
+  const created = json.data.fileCreate.files[0];
+  if (!created) {
+    throw new Error('File upload failed: ' + JSON.stringify(json.data.fileCreate.userErrors));
+  }
+
+  return created.url;
 }
+
 
 /**
  * Create an unpublished product with the uploaded file URL as its image
