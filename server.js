@@ -73,13 +73,27 @@ async function shopifyRequest(path, method = 'GET', body = null) {
  * Upload a base64 attachment to Shopify Files
  * Returns the public file URL
  */
+// Replace your previous uploadFileToShopify with this
 async function uploadFileToShopify(base64, filename) {
+  // GraphQL mutation with inline fragments so we can safely read url on concrete types
   const query = `
     mutation fileCreate($files: [FileCreateInput!]!) {
       fileCreate(files: $files) {
         files {
-          id
-          url
+          fileStatus
+          alt
+          ... on GenericFile {
+            id
+            url
+          }
+          ... on MediaImage {
+            id
+            url
+          }
+          ... on ExternalVideo {
+            id
+            # no url for ExternalVideo maybe; include fields as needed
+          }
         }
         userErrors {
           field
@@ -92,9 +106,10 @@ async function uploadFileToShopify(base64, filename) {
   const variables = {
     files: [
       {
-        contentType: "IMAGE",
+        // Use data URI form for originalSource. Specify contentType if you want.
         originalSource: `data:image/jpeg;base64,${base64}`,
-        alt: filename
+        alt: filename,
+        contentType: "IMAGE"
       }
     ]
   };
@@ -111,17 +126,24 @@ async function uploadFileToShopify(base64, filename) {
 
   const json = await res.json();
 
+  // Debug: if GraphQL returned errors or userErrors, throw so logs show them
   if (json.errors) {
-    throw new Error('GraphQL error: ' + JSON.stringify(json.errors));
+    throw new Error('GraphQL errors: ' + JSON.stringify(json.errors));
+  }
+  if (json.data && json.data.fileCreate && json.data.fileCreate.userErrors && json.data.fileCreate.userErrors.length) {
+    throw new Error('GraphQL userErrors: ' + JSON.stringify(json.data.fileCreate.userErrors));
   }
 
-  const created = json.data.fileCreate.files[0];
-  if (!created) {
-    throw new Error('File upload failed: ' + JSON.stringify(json.data.fileCreate.userErrors));
+  const files = (json.data && json.data.fileCreate && json.data.fileCreate.files) || [];
+  // Find first file entry that has a url (some union types may not)
+  for (const f of files) {
+    if (f && f.url) return f.url;
   }
 
-  return created.url;
+  // If none had url, include the full response in error for debugging
+  throw new Error('File upload failed (no url returned): ' + JSON.stringify(json));
 }
+
 
 
 /**
