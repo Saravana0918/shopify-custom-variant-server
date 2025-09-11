@@ -185,21 +185,44 @@ app.post('/api/create-custom-product', async (req, res) => {
   try {
     const { title = 'Custom Jersey', imageBase64, price } = req.body;
 
-    console.log('Incoming create-custom-product request:', { title, price, imageBase64Length: imageBase64 ? imageBase64.length : 0 });
+    console.log('Incoming create-custom-product request:', {
+      title,
+      price,
+      imageBase64Length: imageBase64 ? imageBase64.length : 0
+    });
 
-    if (!imageBase64) return res.status(400).json({ success: false, message: 'imageBase64 required' });
+    if (!imageBase64) {
+      return res.status(400).json({ success: false, message: 'imageBase64 required' });
+    }
 
-    // NOTE: imageBase64 must be the raw base64 string WITHOUT data:image/... prefix.
-    // If you have a data URL (data:image/png;base64,AAA...) strip the prefix:
-    // const rawBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
     const rawBase64 = imageBase64.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
 
+    // create hidden product with preview
     const product = await createHiddenProductWithImage({ title, imageBase64: rawBase64, price });
 
     const variant = (product.variants && product.variants[0]) || null;
     const variantId = variant && variant.id;
     const sku = variant && variant.sku;
-    const imageSrc = (product.images && product.images[0] && (product.images[0].src || product.images[0].attachment)) || null;
+    const imageSrc =
+      (product.images && product.images[0] && (product.images[0].src || product.images[0].attachment)) || null;
+
+    // 🆕 attach preview image to this variant
+    if (variantId && imageSrc) {
+      await fetch(`https://${process.env.SHOPIFY_STORE}/admin/api/2024-07/products/${product.id}/images.json`, {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': process.env.SHOPIFY_ADMIN_API_TOKEN,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          image: {
+            src: imageSrc,
+            variant_ids: [variantId]
+          }
+        })
+      });
+      console.log('Attached image to variant', variantId);
+    }
 
     res.json({ success: true, productId: product.id, variantId, sku, image: imageSrc, product });
   } catch (err) {
@@ -207,6 +230,7 @@ app.post('/api/create-custom-product', async (req, res) => {
     res.status(500).json({ success: false, message: err.message || String(err) });
   }
 });
+
 
 
 /**
