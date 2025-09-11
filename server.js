@@ -82,7 +82,7 @@ async function shopifyRequestGraphQL(query, variables = {}) {
  * Returns publicly accessible URL (preview.image.url or GenericFile.url)
  */
 async function uploadFileToShopify(base64, filename) {
-  // Build data URI. If you know mime type, set it (jpg default)
+  // Build data URI (use jpeg by default). If your canvas uses png, use image/png.
   const dataUri = `data:image/jpeg;base64,${base64}`;
 
   const query = `
@@ -90,23 +90,10 @@ async function uploadFileToShopify(base64, filename) {
       fileCreate(files: $files) {
         files {
           __typename
-          ... on GenericFile {
-            id
-            url
-          }
-          ... on MediaImage {
-            id
-            preview {
-              image {
-                url
-              }
-            }
-          }
+          ... on GenericFile { id url }
+          ... on MediaImage { id preview { image { url } } }
         }
-        userErrors {
-          field
-          message
-        }
+        userErrors { field message }
       }
     }
   `;
@@ -116,15 +103,14 @@ async function uploadFileToShopify(base64, filename) {
       {
         originalSource: dataUri,
         filename: filename,
-        // mimeType field may be optional; originalSource data URI is primary.
-        mimeType: "image/jpeg"
+        // optional: contentType: "IMAGE",
+        // optional: alt: filename
       }
     ]
   };
 
   const json = await shopifyRequestGraphQL(query, variables);
 
-  // GraphQL-level errors
   if (json.errors && json.errors.length) {
     throw new Error('GraphQL errors: ' + JSON.stringify(json.errors));
   }
@@ -137,7 +123,6 @@ async function uploadFileToShopify(base64, filename) {
   }
 
   const files = fc.files || [];
-  // prefer preview.image.url for MediaImage; fallback to GenericFile.url
   for (const f of files) {
     if (!f) continue;
     if (f.__typename === 'MediaImage' && f.preview && f.preview.image && f.preview.image.url) {
@@ -150,6 +135,7 @@ async function uploadFileToShopify(base64, filename) {
 
   throw new Error('File upload returned no usable URL: ' + JSON.stringify(json));
 }
+
 
 /**
  * Create unpublished product with the uploaded file as image
