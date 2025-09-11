@@ -140,14 +140,21 @@ async function uploadFileToShopify(base64, filename) {
 /**
  * Create unpublished product with the uploaded file as image
  */
-async function createHiddenProductWithImage({ title = 'Custom Jersey', fileUrl, price = '499.00' }) {
+// Replace old createHiddenProductWithImage and remove uploadFileToShopify usage
+async function createHiddenProductWithImage({ title = 'Custom Jersey', imageBase64, price = '499.00' }) {
+  // imageBase64 must be pure base64 (no data: prefix). Shopify expects "attachment" = base64 string.
   const body = {
     product: {
       title,
       vendor: "Next Print",
       product_type: "Custom Jersey",
       published: false,
-      images: [{ src: fileUrl }],
+      images: [
+        {
+          attachment: imageBase64 // <-- pass base64 directly here
+          // optionally you can pass "alt" or "filename" as separate metafields after creation
+        }
+      ],
       variants: [
         {
           option1: "Default",
@@ -163,6 +170,7 @@ async function createHiddenProductWithImage({ title = 'Custom Jersey', fileUrl, 
   return data.product;
 }
 
+
 /**
  * Delete product
  */
@@ -176,25 +184,30 @@ async function deleteProduct(productId) {
 app.post('/api/create-custom-product', async (req, res) => {
   try {
     const { title = 'Custom Jersey', imageBase64, price } = req.body;
+
     console.log('Incoming create-custom-product request:', { title, price, imageBase64Length: imageBase64 ? imageBase64.length : 0 });
 
     if (!imageBase64) return res.status(400).json({ success: false, message: 'imageBase64 required' });
 
-    const filename = `custom-${Date.now()}.jpg`;
-    const fileUrl = await uploadFileToShopify(imageBase64, filename);
-    console.log('Uploaded file URL:', fileUrl);
+    // NOTE: imageBase64 must be the raw base64 string WITHOUT data:image/... prefix.
+    // If you have a data URL (data:image/png;base64,AAA...) strip the prefix:
+    // const rawBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+    const rawBase64 = imageBase64.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
 
-    const product = await createHiddenProductWithImage({ title, fileUrl, price });
+    const product = await createHiddenProductWithImage({ title, imageBase64: rawBase64, price });
+
     const variant = (product.variants && product.variants[0]) || null;
     const variantId = variant && variant.id;
     const sku = variant && variant.sku;
+    const imageSrc = (product.images && product.images[0] && (product.images[0].src || product.images[0].attachment)) || null;
 
-    res.json({ success: true, productId: product.id, variantId, sku, fileUrl });
+    res.json({ success: true, productId: product.id, variantId, sku, image: imageSrc, product });
   } catch (err) {
     console.error('create-custom-product error:', err && err.message ? err.message : err);
     res.status(500).json({ success: false, message: err.message || String(err) });
   }
 });
+
 
 /**
  * Webhook: orders/create (raw body, HMAC verify)
